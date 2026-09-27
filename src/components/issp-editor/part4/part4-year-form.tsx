@@ -16,7 +16,7 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
-import { Plus, Trash2, Pencil, ExternalLink, Table2, LayoutList, CalendarSync, Copy } from "lucide-react";
+import { Plus, Trash2, Pencil, ExternalLink, Table2, LayoutList, CalendarSync, Copy, ArrowUp, ArrowDown } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
@@ -396,6 +396,49 @@ function MoveLineMenu({
   );
 }
 
+// ─── Reorder Line Buttons ─────────────────────────────────────────────────────
+
+const REORDER_BUTTON_CLS =
+  "h-7 w-7 shrink-0 inline-flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-all disabled:pointer-events-none disabled:opacity-30";
+
+function ReorderLineButtons({
+  idx,
+  lineCount,
+  onReorder,
+}: {
+  idx: number;
+  lineCount: number;
+  onReorder: (direction: "up" | "down") => void;
+}) {
+  const isFirst = idx === 0;
+  const isLast = idx === lineCount - 1;
+
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={`Move line ${idx + 1} up`}
+        title="Move up"
+        className={REORDER_BUTTON_CLS}
+        disabled={isFirst}
+        onClick={(e) => { e.stopPropagation(); onReorder("up"); }}
+      >
+        <ArrowUp className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        aria-label={`Move line ${idx + 1} down`}
+        title="Move down"
+        className={REORDER_BUTTON_CLS}
+        disabled={isLast}
+        onClick={(e) => { e.stopPropagation(); onReorder("down"); }}
+      >
+        <ArrowDown className="h-3.5 w-3.5" />
+      </button>
+    </>
+  );
+}
+
 // ─── Line Items Table ──────────────────────────────────────────────────────────
 
 interface DrawerState {
@@ -450,6 +493,31 @@ function LineTable({
 
   function deleteLine(idx: number) {
     onUpdate(lines.filter((_, i) => i !== idx));
+  }
+
+  /** Swap a line with its neighbour. Array order is the row order in the PDF. */
+  function reorderLine(idx: number, direction: "up" | "down") {
+    let toIndex: number;
+    if (direction === "up") {
+      toIndex = idx - 1;
+    } else {
+      toIndex = idx + 1;
+    }
+
+    const isBeforeFirst = toIndex < 0;
+    if (isBeforeFirst) {
+      return;
+    }
+    const isAfterLast = toIndex >= lines.length;
+    if (isAfterLast) {
+      return;
+    }
+
+    const next = [...lines];
+    const movedLine = next[idx];
+    next[idx] = next[toIndex];
+    next[toIndex] = movedLine;
+    onUpdate(next);
   }
 
   /** Insert a copy (with its own id) directly below the original line. */
@@ -514,6 +582,11 @@ function LineTable({
                   <span className="text-sm font-semibold tabular-nums shrink-0">
                     {php(totalLine(line))}
                   </span>
+                  <ReorderLineButtons
+                    idx={idx}
+                    lineCount={lines.length}
+                    onReorder={(direction) => reorderLine(idx, direction)}
+                  />
                   <button
                     type="button"
                     aria-label="Duplicate line item"
@@ -554,7 +627,7 @@ function LineTable({
         {/* ── Table mode ─────────────────────────────────────────────────── */}
         {mode === "table" && (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm border-collapse min-w-[720px]">
+            <table className="w-full text-sm border-collapse min-w-[840px]">
               <thead>
                 <tr className="bg-muted/40 border-b">
                   <th className="border-r px-3 py-2 text-left font-semibold">Item / Description</th>
@@ -564,7 +637,7 @@ function LineTable({
                   <th className="border-r px-3 py-2 text-right font-semibold w-28">Unit Cost ₱</th>
                   <th className="border-r px-3 py-2 text-right font-semibold w-24">Physical Target</th>
                   <th className="border-r px-3 py-2 text-right font-semibold w-28">Total ₱</th>
-                  <th className="px-2 py-2 w-24" />
+                  <th className="px-2 py-2 w-40" />
                 </tr>
               </thead>
               <tbody>
@@ -645,6 +718,11 @@ function LineTable({
                     </td>
                     <td className="px-1 py-1">
                       <div className="flex items-center justify-center">
+                      <ReorderLineButtons
+                        idx={idx}
+                        lineCount={lines.length}
+                        onReorder={(direction) => reorderLine(idx, direction)}
+                      />
                       <Button
                         variant="ghost"
                         size="icon"
