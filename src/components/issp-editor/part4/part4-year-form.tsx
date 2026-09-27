@@ -16,10 +16,21 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
-import { Plus, Trash2, Pencil, ExternalLink, Table2, LayoutList } from "lucide-react";
+import { Plus, Trash2, Pencil, ExternalLink, Table2, LayoutList, CalendarSync } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { toast } from "sonner";
 import { SectionShell } from "@/components/editor/section-shell";
 import { php } from "@/lib/utils";
+import { useIsspStore } from "@/lib/store";
+import { yearsBetween, durationCoversYear } from "@/lib/duration";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,9 +58,34 @@ export interface YearBudget {
   continuingCosts: { mooe: LineItem[] };
 }
 
+type YearKey = "year1" | "year2" | "year3";
+
+const YEAR_KEYS: YearKey[] = ["year1", "year2", "year3"];
+
+/**
+ * Where a line lives inside a YearBudget. A line moved to another year lands
+ * in the same slot there (same category, same project, same CO/MOOE table).
+ */
+type LineLocation =
+  | { category: "officeProductivity"; costType: "capitalOutlay" | "mooe" }
+  | {
+      category: "internalProjects" | "crossAgencyProjects";
+      projectId: string;
+      projectTitle: string;
+      costType: "capitalOutlay" | "mooe";
+    }
+  | { category: "continuingCosts" };
+
+/** A year a line can be moved to. `disabledReason` is null when the move is allowed. */
+interface MoveTarget {
+  yearKey: YearKey;
+  year: number;
+  disabledReason: string | null;
+}
+
 interface Part4YearFormProps {
   year: number;
-  yearKey: "year1" | "year2" | "year3";
+  yearKey: YearKey;
   initialData: YearBudget;
   internalProjects: { id: string; title: string }[];
   crossAgencyProjects: { id: string; title: string }[];
@@ -81,6 +117,47 @@ function totalLine(l: LineItem) {
 
 function sumLines(lines: LineItem[]) {
   return lines.reduce((s, l) => s + totalLine(l), 0);
+}
+
+function getLines(budget: YearBudget, location: LineLocation): LineItem[] {
+  if (location.category === "officeProductivity") {
+    return budget.officeProductivity[location.costType];
+  }
+  if (location.category === "continuingCosts") {
+    return budget.continuingCosts.mooe;
+  }
+  const projectBudget = budget[location.category][location.projectId];
+  if (!projectBudget) {
+    return [];
+  }
+  return projectBudget[location.costType];
+}
+
+function withLines(budget: YearBudget, location: LineLocation, lines: LineItem[]): YearBudget {
+  if (location.category === "officeProductivity") {
+    return {
+      ...budget,
+      officeProductivity: { ...budget.officeProductivity, [location.costType]: lines },
+    };
+  }
+  if (location.category === "continuingCosts") {
+    return { ...budget, continuingCosts: { mooe: lines } };
+  }
+  // The destination year may not have a bucket for this project yet
+  const existingProjectBudget = budget[location.category][location.projectId];
+  let projectBudget: ProjectBudget;
+  if (existingProjectBudget) {
+    projectBudget = existingProjectBudget;
+  } else {
+    projectBudget = { projectTitle: location.projectTitle, capitalOutlay: [], mooe: [] };
+  }
+  return {
+    ...budget,
+    [location.category]: {
+      ...budget[location.category],
+      [location.projectId]: { ...projectBudget, [location.costType]: lines },
+    },
+  };
 }
 
 const FUND_SOURCES = [
@@ -275,6 +352,50 @@ function LineItemDrawer({ open, item, isNew, context, onSave, onDelete, onClose 
   );
 }
 
+// ─── Move Line Menu ───────────────────────────────────────────────────────────
+
+function MoveLineMenu({
+  targets,
+  onMove,
+}: {
+  targets: MoveTarget[];
+  onMove: (targetKey: YearKey) => void;
+}) {
+  return (
+    // Stops clicks (including ones bubbling out of the portalled menu) from
+    // reaching the list row, which opens the edit drawer.
+    <span className="shrink-0 inline-flex" onClick={(e) => e.stopPropagation()}>
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger
+          aria-label="Move line item to another year"
+          title="Move to another year"
+          className="h-7 w-7 shrink-0 inline-flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-all"
+        >
+          <CalendarSync className="h-3.5 w-3.5" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-64">
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Move to another year</DropdownMenuLabel>
+            {targets.map((target) => (
+              <DropdownMenuItem
+                key={target.yearKey}
+                disabled={target.disabledReason !== null}
+                onClick={() => onMove(target.yearKey)}
+                className="flex-col items-start gap-0"
+              >
+                <span>Move to {target.year}</span>
+                {target.disabledReason !== null && (
+                  <span className="text-xs text-muted-foreground">{target.disabledReason}</span>
+                )}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </span>
+  );
+}
+
 // ─── Line Items Table ──────────────────────────────────────────────────────────
 
 interface DrawerState {
@@ -292,12 +413,16 @@ function LineTable({
   lines,
   mode,
   onUpdate,
+  moveTargets,
+  onMove,
 }: {
   title: string;
   context: "co" | "mooe";
   lines: LineItem[];
   mode: "list" | "table";
   onUpdate: (lines: LineItem[]) => void;
+  moveTargets: MoveTarget[];
+  onMove: (idx: number, targetKey: YearKey) => void;
 }) {
   const [drawer, setDrawer] = useState<DrawerState>({ open: false, idx: -1, item: null });
 
@@ -378,6 +503,7 @@ function LineTable({
                   <span className="text-sm font-semibold tabular-nums shrink-0">
                     {php(totalLine(line))}
                   </span>
+                  <MoveLineMenu targets={moveTargets} onMove={(targetKey) => onMove(idx, targetKey)} />
                   <button
                     type="button"
                     aria-label="Edit line item"
@@ -418,7 +544,7 @@ function LineTable({
                   <th className="border-r px-3 py-2 text-right font-semibold w-28">Unit Cost ₱</th>
                   <th className="border-r px-3 py-2 text-right font-semibold w-24">Physical Target</th>
                   <th className="border-r px-3 py-2 text-right font-semibold w-28">Total ₱</th>
-                  <th className="px-2 py-2 w-8" />
+                  <th className="px-2 py-2 w-16" />
                 </tr>
               </thead>
               <tbody>
@@ -497,7 +623,9 @@ function LineTable({
                     <td className="border-r px-3 py-2 text-right tabular-nums text-sm font-medium">
                       {php(totalLine(line))}
                     </td>
-                    <td className="px-1 py-1 text-center">
+                    <td className="px-1 py-1">
+                      <div className="flex items-center justify-center">
+                      <MoveLineMenu targets={moveTargets} onMove={(targetKey) => onMove(idx, targetKey)} />
                       <Button
                         variant="ghost"
                         size="icon"
@@ -507,6 +635,7 @@ function LineTable({
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -627,6 +756,107 @@ export function Part4YearForm({
     [debouncedSave, yearKey]
   );
 
+  // ── Moving a line to another plan year ──────────────────────────────────────
+  const { doc, updatePart4, updateSectionMeta } = useIsspStore();
+
+  function yearNumberFor(key: YearKey): number {
+    if (!doc) {
+      return year;
+    }
+    // Same mapping as the /editor/part4/yearN pages
+    if (key === "year1") {
+      return doc.startYear;
+    }
+    if (key === "year2") {
+      return doc.startYear + 1;
+    }
+    return doc.endYear;
+  }
+
+  function moveTargetsFor(location: LineLocation): MoveTarget[] {
+    if (!doc) {
+      return [];
+    }
+    const planYears = yearsBetween(doc.startYear, doc.endYear);
+    const targets: MoveTarget[] = [];
+
+    for (const targetKey of YEAR_KEYS) {
+      if (targetKey === yearKey) {
+        continue;
+      }
+      const targetYear = yearNumberFor(targetKey);
+
+      // Project lines can only go to years the project's Part III-E duration covers
+      let disabledReason: string | null = null;
+      const isProjectLine =
+        location.category === "internalProjects" || location.category === "crossAgencyProjects";
+      if (isProjectLine) {
+        let projects;
+        if (location.category === "internalProjects") {
+          projects = doc.part3.internalProjects;
+        } else {
+          projects = doc.part3.crossAgencyProjects;
+        }
+        const project = projects.find((p) => p.id === location.projectId);
+        if (!project) {
+          disabledReason = "Project no longer exists in Part III-E";
+        } else {
+          const duration = project.duration ?? "";
+          const coversTargetYear = durationCoversYear(duration, String(targetYear), planYears);
+          if (!coversTargetYear) {
+            const durationLabel = duration || "not set";
+            disabledReason = `Outside the project's duration (${durationLabel})`;
+          }
+        }
+      }
+
+      targets.push({ yearKey: targetKey, year: targetYear, disabledReason });
+    }
+    return targets;
+  }
+
+  function moveLine(location: LineLocation, lineIndex: number, targetKey: YearKey) {
+    if (!doc) {
+      toast.error("Could not move the line item: no plan is loaded.");
+      return;
+    }
+
+    const sourceLines = getLines(budget, location);
+    const line = sourceLines[lineIndex];
+    if (!line) {
+      toast.error("Could not move the line item: it was not found in this year.");
+      return;
+    }
+
+    const remainingLines = sourceLines.filter((_, i) => i !== lineIndex);
+    const nextSourceBudget = withLines(budget, location, remainingLines);
+
+    let targetBudget = doc.part4[targetKey];
+    if (!targetBudget) {
+      targetBudget = EMPTY_BUDGET();
+    }
+    const targetLines = getLines(targetBudget, location);
+    const nextTargetBudget = withLines(targetBudget, location, [...targetLines, line]);
+
+    // One store update for both years, so the line is never in both or neither
+    setBudget(nextSourceBudget);
+    updatePart4({ [yearKey]: nextSourceBudget, [targetKey]: nextTargetBudget });
+
+    const editedAt = new Date().toISOString();
+    updateSectionMeta(sectionId, { lastEditedAt: editedAt });
+    updateSectionMeta(`part4/${targetKey}`, { lastEditedAt: editedAt });
+
+    const itemName = line.item.trim() || "Unnamed item";
+    toast.success(`Moved “${itemName}” to ${yearNumberFor(targetKey)}`);
+  }
+
+  function moveProps(location: LineLocation) {
+    return {
+      moveTargets: moveTargetsFor(location),
+      onMove: (lineIndex: number, targetKey: YearKey) => moveLine(location, lineIndex, targetKey),
+    };
+  }
+
   // Totals follow the sections this page renders (duration-filtered), not
   // every bucket in state — legacy off-duration buckets must not count.
   const bucketTotal = (pid: string) => {
@@ -728,6 +958,7 @@ export function Part4YearForm({
             context="co"
             lines={budget.officeProductivity.capitalOutlay}
             mode={lineMode}
+            {...moveProps({ category: "officeProductivity", costType: "capitalOutlay" })}
             onUpdate={(lines) =>
               save({
                 ...budget,
@@ -740,6 +971,7 @@ export function Part4YearForm({
             context="mooe"
             lines={budget.officeProductivity.mooe}
             mode={lineMode}
+            {...moveProps({ category: "officeProductivity", costType: "mooe" })}
             onUpdate={(lines) =>
               save({
                 ...budget,
@@ -780,6 +1012,7 @@ export function Part4YearForm({
                 context="co"
                 lines={pb.capitalOutlay}
                 mode={lineMode}
+                {...moveProps({ category: "internalProjects", projectId: proj.id, projectTitle: proj.title, costType: "capitalOutlay" })}
                 onUpdate={(lines) =>
                   save({
                     ...budget,
@@ -795,6 +1028,7 @@ export function Part4YearForm({
                 context="mooe"
                 lines={pb.mooe}
                 mode={lineMode}
+                {...moveProps({ category: "internalProjects", projectId: proj.id, projectTitle: proj.title, costType: "mooe" })}
                 onUpdate={(lines) =>
                   save({
                     ...budget,
@@ -830,6 +1064,7 @@ export function Part4YearForm({
                 context="co"
                 lines={pb.capitalOutlay}
                 mode={lineMode}
+                {...moveProps({ category: "crossAgencyProjects", projectId: proj.id, projectTitle: proj.title, costType: "capitalOutlay" })}
                 onUpdate={(lines) =>
                   save({
                     ...budget,
@@ -845,6 +1080,7 @@ export function Part4YearForm({
                 context="mooe"
                 lines={pb.mooe}
                 mode={lineMode}
+                {...moveProps({ category: "crossAgencyProjects", projectId: proj.id, projectTitle: proj.title, costType: "mooe" })}
                 onUpdate={(lines) =>
                   save({
                     ...budget,
@@ -872,6 +1108,7 @@ export function Part4YearForm({
             context="mooe"
             lines={budget.continuingCosts.mooe}
             mode={lineMode}
+            {...moveProps({ category: "continuingCosts" })}
             onUpdate={(lines) => save({ ...budget, continuingCosts: { mooe: lines } })}
           />
         </SectionCard>
