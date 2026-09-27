@@ -1239,12 +1239,12 @@ export function EditorSidebar({
             made with ❤️ <em>para sa bayan</em>
             {" · "}
             <a
-              href="https://carlosanton.io"
+              href="https://github.com/kosinix/issp-builder/graphs/contributors"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-muted-foreground/70 transition-colors underline underline-offset-2"
             >
-              carlosanton.io
+              Credits
             </a>
           </p>
         </div>

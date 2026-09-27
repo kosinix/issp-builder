@@ -32,7 +32,7 @@ A **modal that appears when a PDF export completes** and the file begins downloa
 - Below the "your download is ready ↗" cue, a short, warm attribution + the recognition ask
   (feedback link, "consider a PRAISE nomination / recommendation", contact).
 - Tone: tasteful, self-aware, *para sa bayan* — matches the splash attribution chip
-  (`Made with ❤️ … Carlos Antonio Albornoz`). Not pushy; dismissible; remembered so it
+  (`Made with ❤️ … Credits`). Not pushy; dismissible; remembered so it
   doesn't nag every single export.
 
 ## Open questions to resolve when building
