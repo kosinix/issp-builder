@@ -16,7 +16,7 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
-import { Plus, Trash2, Pencil, ExternalLink, Table2, LayoutList, CalendarSync } from "lucide-react";
+import { Plus, Trash2, Pencil, ExternalLink, Table2, LayoutList, CalendarSync, Copy } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
@@ -452,6 +452,17 @@ function LineTable({
     onUpdate(lines.filter((_, i) => i !== idx));
   }
 
+  /** Insert a copy (with its own id) directly below the original line. */
+  function duplicateLine(idx: number) {
+    const original = lines[idx];
+    if (!original) {
+      return;
+    }
+    const copy: LineItem = { ...original, id: genId() };
+    const next = [...lines.slice(0, idx + 1), copy, ...lines.slice(idx + 1)];
+    onUpdate(next);
+  }
+
   const total = sumLines(lines);
 
   return (
@@ -503,6 +514,15 @@ function LineTable({
                   <span className="text-sm font-semibold tabular-nums shrink-0">
                     {php(totalLine(line))}
                   </span>
+                  <button
+                    type="button"
+                    aria-label="Duplicate line item"
+                    title="Duplicate"
+                    className="h-7 w-7 shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-all"
+                    onClick={(e) => { e.stopPropagation(); duplicateLine(idx); }}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </button>
                   <MoveLineMenu targets={moveTargets} onMove={(targetKey) => onMove(idx, targetKey)} />
                   <button
                     type="button"
@@ -544,7 +564,7 @@ function LineTable({
                   <th className="border-r px-3 py-2 text-right font-semibold w-28">Unit Cost ₱</th>
                   <th className="border-r px-3 py-2 text-right font-semibold w-24">Physical Target</th>
                   <th className="border-r px-3 py-2 text-right font-semibold w-28">Total ₱</th>
-                  <th className="px-2 py-2 w-16" />
+                  <th className="px-2 py-2 w-24" />
                 </tr>
               </thead>
               <tbody>
@@ -625,6 +645,16 @@ function LineTable({
                     </td>
                     <td className="px-1 py-1">
                       <div className="flex items-center justify-center">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Duplicate line"
+                        title="Duplicate"
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                        onClick={() => duplicateLine(idx)}
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </Button>
                       <MoveLineMenu targets={moveTargets} onMove={(targetKey) => onMove(idx, targetKey)} />
                       <Button
                         variant="ghost"
