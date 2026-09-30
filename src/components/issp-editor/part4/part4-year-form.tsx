@@ -1,13 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { DEFAULT_FUND_SOURCE, FUND_SOURCE_OPTIONS } from "@/lib/fund-sources";
 import { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NumberInput } from "@/components/ui/number-input";
 import { Textarea } from "@/components/ui/textarea";
 import { useLocalSave } from "@/hooks/use-local-save";
-import { UacsCombobox } from "@/components/issp-editor/uacs-combobox";
+import { CategorySelect, CategoryMissing } from "./category-select";
+import { categoryName } from "@/lib/expense-categories";
 import {
   Sheet,
   SheetContent,
@@ -16,8 +18,8 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
-import { Plus, Trash2, Pencil, ExternalLink, Table2, LayoutList, CalendarSync, Copy, ArrowUp, ArrowDown } from "lucide-react";
-import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
+import { Plus, Trash2, Pencil, CalendarSync, Copy, ArrowUp, ArrowDown } from "lucide-react";
+import { LineModeToggle, usePersistedLineMode, type LineMode } from "./line-mode";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,8 +40,7 @@ export interface LineItem {
   id: string;
   item: string;
   office: string;
-  uacsCode: string;
-  uacsLabel: string;
+  categoryId: string;
   fundSource: string;
   qty: number;
   unitCost: number;
@@ -104,9 +105,8 @@ const BLANK_LINE = (): LineItem => ({
   id: genId(),
   item: "",
   office: "",
-  uacsCode: "",
-  uacsLabel: "",
-  fundSource: "General Appropriations Act",
+  categoryId: "",
+  fundSource: DEFAULT_FUND_SOURCE,
   qty: 1,
   unitCost: 0,
 });
@@ -160,12 +160,7 @@ function withLines(budget: YearBudget, location: LineLocation, lines: LineItem[]
   };
 }
 
-const FUND_SOURCES = [
-  "General Appropriations Act",
-  "Foreign-assisted projects",
-  "Locally funded",
-  "Other Income Generating Sources",
-];
+const FUND_SOURCES = FUND_SOURCE_OPTIONS;
 
 const OFFICE_SUGGESTIONS = [
   "Central Office",
@@ -201,7 +196,6 @@ function LineItemDrawer({ open, item, isNew, context, onSave, onDelete, onClose 
   }
 
   const lineTotal = draft.qty * draft.unitCost;
-  const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
   const itemError = draft.item.trim() ? null : "Description is required.";
   const costError = draft.unitCost > 0 ? null : "Unit cost must be greater than ₱0.";
@@ -258,34 +252,16 @@ function LineItemDrawer({ open, item, isNew, context, onSave, onDelete, onClose 
           </div>
 
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-medium">UACS Code</label>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <a
-                        href={`${basePath}/uacs`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors"
-                      />
-                    }
-                  >
-                    Browse codes
-                    <ExternalLink className="h-3 w-3" />
-                  </TooltipTrigger>
-                  <TooltipContent side="left">Open UACS Explorer in a new tab</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-            <UacsCombobox
-              value={draft.uacsCode}
-              context={context}
-              onChange={(uacs, label) =>
-                setDraft((prev) => ({ ...prev, uacsCode: uacs, uacsLabel: label }))
-              }
+            <label className="text-sm font-medium">Expense Category</label>
+            <CategorySelect
+              value={draft.categoryId}
+              expenseClass={context === "co" ? "capitalOutlay" : "mooe"}
+              onChange={(categoryId) => set("categoryId", categoryId)}
             />
+            <p className="text-xs text-muted-foreground">
+              One of the 30 official DICT expense categories (ISSP handout). Items without a
+              category are excluded from B.4.
+            </p>
           </div>
 
           <div className="space-y-1.5">
@@ -462,7 +438,7 @@ function LineTable({
   title: string;
   context: "co" | "mooe";
   lines: LineItem[];
-  mode: "list" | "table";
+  mode: LineMode;
   onUpdate: (lines: LineItem[]) => void;
   moveTargets: MoveTarget[];
   onMove: (idx: number, targetKey: YearKey) => void;
@@ -570,13 +546,13 @@ function LineTable({
                       )}
                     </p>
                     <p className="text-xs text-muted-foreground truncate mt-0.5">
-                      {[
-                        line.uacsLabel || (line.uacsCode ? `UACS ${line.uacsCode}` : null),
-                        line.office || null,
-                        line.fundSource !== FUND_SOURCES[0] ? line.fundSource : null,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ") || "No details yet"}
+                      {line.categoryId ? (
+                        categoryName(line.categoryId)
+                      ) : (
+                        <CategoryMissing />
+                      )}
+                      {line.office ? ` · ${line.office}` : ""}
+                      {line.fundSource !== FUND_SOURCES[0] ? ` · ${line.fundSource}` : ""}
                     </p>
                   </div>
                   <span className="text-sm font-semibold tabular-nums shrink-0">
@@ -632,7 +608,7 @@ function LineTable({
                 <tr className="bg-muted/40 border-b">
                   <th className="border-r px-3 py-2 text-left font-semibold">Item / Description</th>
                   <th className="border-r px-3 py-2 text-left font-semibold w-32">Office / Unit</th>
-                  <th className="border-r px-3 py-2 text-left font-semibold w-36">UACS</th>
+                  <th className="border-r px-3 py-2 text-left font-semibold w-44">Category</th>
                   <th className="border-r px-3 py-2 text-left font-semibold w-44">Fund Source</th>
                   <th className="border-r px-3 py-2 text-right font-semibold w-28">Unit Cost ₱</th>
                   <th className="border-r px-3 py-2 text-right font-semibold w-24">Physical Target</th>
@@ -677,10 +653,16 @@ function LineTable({
                         type="button"
                         onClick={() => openEdit(idx)}
                         className="w-full text-left rounded px-2 py-1.5 text-xs bg-card/70 hover:bg-card focus:bg-card focus:outline-none focus:ring-1 focus:ring-ring group flex items-center justify-between gap-1 min-h-[2rem]"
-                        title="Click to edit UACS code"
+                        title="Click to edit expense category"
                       >
-                        <span className={line.uacsLabel || line.uacsCode ? "text-foreground" : "text-muted-foreground/60 italic"}>
-                          {line.uacsLabel || line.uacsCode || "Set UACS…"}
+                        <span
+                          className={
+                            line.categoryId
+                              ? "text-foreground truncate"
+                              : "text-warning italic"
+                          }
+                        >
+                          {line.categoryId ? categoryName(line.categoryId) : "Set category…"}
                         </span>
                         <Pencil className="h-3 w-3 text-muted-foreground/40 shrink-0 group-hover:text-muted-foreground" />
                       </button>
@@ -817,7 +799,7 @@ const EMPTY_BUDGET = (): YearBudget => ({
   continuingCosts: { mooe: [] },
 });
 
-const LS_KEY = "issp-part4-line-mode";
+const LINE_MODE_STORAGE_KEY = "issp-part4-line-mode";
 
 export function Part4YearForm({
   year,
@@ -844,14 +826,7 @@ export function Part4YearForm({
     return { ...base, ...initialData, internalProjects: ip, crossAgencyProjects: cp };
   });
 
-  const [lineMode, setLineMode] = useState<"list" | "table">(() => {
-    try { return (localStorage.getItem(LS_KEY) as "list" | "table") ?? "list"; } catch { return "list"; }
-  });
-
-  function switchLineMode(m: "list" | "table") {
-    setLineMode(m);
-    try { localStorage.setItem(LS_KEY, m); } catch {}
-  }
+  const [lineMode, switchLineMode] = usePersistedLineMode(LINE_MODE_STORAGE_KEY);
 
   const sectionId = `part4/${yearKey}` as `part4/${"year1" | "year2" | "year3"}`;
   const { debouncedSave } = useLocalSave("part4", sectionId);
@@ -1034,23 +1009,7 @@ export function Part4YearForm({
             {label}
           </span>
         ))}
-        <div className="ml-auto flex items-center rounded-md border p-0.5 bg-muted/30">
-          {(["list", "table"] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => switchLineMode(m)}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs transition-colors ${
-                lineMode === m
-                  ? "bg-card shadow-sm font-medium text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {m === "list" ? <LayoutList className="h-3 w-3" /> : <Table2 className="h-3 w-3" />}
-              {m === "list" ? "List" : "Table"}
-            </button>
-          ))}
-        </div>
+        <LineModeToggle mode={lineMode} onChange={switchLineMode} className="ml-auto" />
       </div>
 
       {/* A — Office Productivity — hidden in project-filtered scoped files
